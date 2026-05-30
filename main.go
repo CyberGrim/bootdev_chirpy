@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 )
 
@@ -17,6 +19,23 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 		cfg.fileserverHits.Add(1)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func profanityMutation(msg string) string {
+	profanityList := []string{
+		"kerfuffle",
+		"sharbert",
+		"fornax",
+	}
+	words := strings.Split(msg, " ")
+
+	for idx, word := range words {
+		if slices.Contains(profanityList, strings.ToLower(word)) {
+			words[idx] = "****"
+		}
+	}
+
+	return strings.Join(words, " ")
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
@@ -68,7 +87,7 @@ func (cfg *apiConfig) handlerValidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type returnValidated struct {
-		Valid bool `json:"valid"`
+		Cleaned string `json:"cleaned_body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -82,7 +101,10 @@ func (cfg *apiConfig) handlerValidate(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
 	}
-	respondWithJSON(w, http.StatusOK, returnValidated{Valid: true})
+
+	cleanedMsg := profanityMutation(chirpMsg.Body)
+
+	respondWithJSON(w, http.StatusOK, returnValidated{Cleaned: cleanedMsg})
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {

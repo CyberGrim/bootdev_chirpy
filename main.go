@@ -91,32 +91,6 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 </html>`, metricsLoad)))
 }
 
-func (cfg *apiConfig) handlerValidate(w http.ResponseWriter, r *http.Request) {
-	type chirp struct {
-		Body string `json:"body"`
-	}
-
-	type returnValidated struct {
-		Cleaned string `json:"cleaned_body"`
-	}
-
-	decoder := json.NewDecoder(r.Body)
-	chirpMsg := chirp{}
-	err := decoder.Decode(&chirpMsg)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Something went wrong")
-		return
-	}
-	if len(chirpMsg.Body) > 140 {
-		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
-		return
-	}
-
-	cleanedMsg := profanityMutation(chirpMsg.Body)
-
-	respondWithJSON(w, http.StatusOK, returnValidated{Cleaned: cleanedMsg})
-}
-
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	if cfg.platform != "dev" {
 		respondWithError(w, 403, "Not in dev mode, reset action blocked")
@@ -165,6 +139,51 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 	respondWithJSON(w, 201, createdUser)
 }
 
+func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
+	type UserChirp struct {
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
+	}
+
+	type ReturnedChirp struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	userChirp := UserChirp{}
+	err := decoder.Decode(&userChirp)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+	if len(userChirp.Body) > 140 {
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		return
+	}
+
+	cleanedMsg := profanityMutation(userChirp.Body)
+
+	dbChirp, err := cfg.dbQueries.CreateChirp(
+		r.Context(),
+		database.CreateChirpParams{
+			Body:   cleanedMsg,
+			UserID: userChirp.UserID,
+		},
+	)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	createdChirp := ReturnedChirp{dbChirp.ID, dbChirp.CreatedAt, dbChirp.UpdatedAt, dbChirp.Body, dbChirp.UserID}
+
+	respondWithJSON(w, 201, createdChirp)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -184,8 +203,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
-	mux.HandleFunc("POST /api/validate_chirp", api.handlerValidate)
 	mux.HandleFunc("POST /api/users", api.handlerCreateUser)
+	mux.HandleFunc("POST /api/chirps", api.handlerCreateChirp)
 
 	srv := &http.Server{
 		Addr:    ":8080",

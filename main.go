@@ -184,6 +184,36 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 	respondWithJSON(w, 201, createdChirp)
 }
 
+func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
+	type ReturnedChirps struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+
+	chirps, err := cfg.dbQueries.GetChirps(r.Context())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	chirpsArray := []ReturnedChirps{}
+
+	for _, chirp := range chirps {
+		chirpsArray = append(chirpsArray, ReturnedChirps{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		})
+	}
+
+	respondWithJSON(w, 200, chirpsArray)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -205,6 +235,7 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/users", api.handlerCreateUser)
 	mux.HandleFunc("POST /api/chirps", api.handlerCreateChirp)
+	mux.HandleFunc("GET /api/chirps", api.handlerGetChirps)
 
 	srv := &http.Server{
 		Addr:    ":8080",

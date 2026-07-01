@@ -214,6 +214,38 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, 200, chirpsArray)
 }
 
+func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request) {
+	type ReturnedChirp struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+
+	chirpIDString := r.PathValue("chirpID")
+	chirpUUID, err := uuid.Parse(chirpIDString)
+
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	chirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpUUID)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "Chirp couldn't be found")
+		return
+	}
+	returningChirp := ReturnedChirp{
+		ID:        chirp.ID,
+		CreatedAt: chirp.CreatedAt,
+		UpdatedAt: chirp.UpdatedAt,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
+	}
+	respondWithJSON(w, 200, returningChirp)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -236,6 +268,7 @@ func main() {
 	mux.HandleFunc("POST /api/users", api.handlerCreateUser)
 	mux.HandleFunc("POST /api/chirps", api.handlerCreateChirp)
 	mux.HandleFunc("GET /api/chirps", api.handlerGetChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", api.handlerGetChirpByID)
 
 	srv := &http.Server{
 		Addr:    ":8080",

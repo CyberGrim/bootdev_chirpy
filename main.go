@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cybergrim/bootdev_chirpy/internal/auth"
 	"github.com/cybergrim/bootdev_chirpy/internal/database"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -83,12 +84,12 @@ func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	metricsLoad := cfg.fileserverHits.Load()
-	w.Write([]byte(fmt.Sprintf(`<html>
+	fmt.Fprintf(w, `<html>
   <body>
     <h1>Welcome, Chirpy Admin</h1>
     <p>Chirpy has been visited %d times!</p>
   </body>
-</html>`, metricsLoad)))
+</html>`, metricsLoad)
 }
 
 func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
@@ -105,12 +106,13 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	cfg.fileserverHits.Store(0)
 	metricsLoad := cfg.fileserverHits.Load()
-	w.Write([]byte(fmt.Sprintf("Hits: %d. Metrics Reset.", metricsLoad)))
+	fmt.Fprintf(w, "Hits: %d. Metrics Reset.", metricsLoad)
 }
 
 func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
 	type UserEmail struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	type ReturnedUser struct {
@@ -127,8 +129,19 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return
 	}
+	hash, hashErr := auth.HashPassword(userEmail.Password)
+	if hashErr != nil {
+		respondWithError(w, http.StatusBadRequest, "Password hashing went... badly")
+		return
+	}
 
-	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), userEmail.Email)
+	dbUser, err := cfg.dbQueries.CreateUser(
+		r.Context(),
+		database.CreateUserParams{
+			Email:          userEmail.Email,
+			HashedPassword: hash,
+		},
+	)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Something went wrong")
 		return
@@ -136,7 +149,7 @@ func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) 
 
 	createdUser := ReturnedUser{dbUser.ID, dbUser.CreatedAt, dbUser.UpdatedAt, dbUser.Email}
 
-	respondWithJSON(w, 201, createdUser)
+	respondWithJSON(w, http.StatusCreated, createdUser)
 }
 
 func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +194,49 @@ func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request)
 
 	createdChirp := ReturnedChirp{dbChirp.ID, dbChirp.CreatedAt, dbChirp.UpdatedAt, dbChirp.Body, dbChirp.UserID}
 
-	respondWithJSON(w, 201, createdChirp)
+	respondWithJSON(w, http.StatusCreated, createdChirp)
+}
+
+func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
+	type UserEmail struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	type ReturnedUser struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	userEmail := UserEmail{}
+	err := decoder.Decode(&userEmail)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Something went wrong")
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.GetUser(r.Context(), userEmail.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	result, loginErr := auth.CheckPasswordHash(userEmail.Password, dbUser.HashedPassword)
+	if loginErr != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+	if result == false {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password")
+		return
+	}
+
+	returnedUser := ReturnedUser{dbUser.ID, dbUser.CreatedAt, dbUser.UpdatedAt, dbUser.Email}
+
+	respondWithJSON(w, http.StatusOK, returnedUser)
 }
 
 func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +266,7 @@ func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondWithJSON(w, 200, chirpsArray)
+	respondWithJSON(w, http.StatusOK, chirpsArray)
 }
 
 func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request) {
@@ -243,7 +298,7 @@ func (cfg *apiConfig) handlerGetChirpByID(w http.ResponseWriter, r *http.Request
 		Body:      chirp.Body,
 		UserID:    chirp.UserID,
 	}
-	respondWithJSON(w, 200, returningChirp)
+	respondWithJSON(w, http.StatusOK, returningChirp)
 }
 
 func main() {
@@ -267,6 +322,7 @@ func main() {
 	})
 	mux.HandleFunc("POST /api/users", api.handlerCreateUser)
 	mux.HandleFunc("POST /api/chirps", api.handlerCreateChirp)
+	mux.HandleFunc("POST /api/login", api.handlerLogin)
 	mux.HandleFunc("GET /api/chirps", api.handlerGetChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", api.handlerGetChirpByID)
 

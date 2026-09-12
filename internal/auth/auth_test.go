@@ -2,6 +2,9 @@ package auth
 
 import (
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 var correctPassword string = "CorrectPassword123"
@@ -41,5 +44,74 @@ func TestCheckPasswordHash(t *testing.T) {
 	}
 	if responseFalse == true {
 		t.Fatal("Hash Check returned true - Expected false")
+	}
+}
+
+func TestMakeAndValidateJWT(t *testing.T) {
+	userID := uuid.New()
+	secret := "test-secret"
+
+	token, err := MakeJWT(userID, secret, time.Hour)
+	if err != nil {
+		t.Fatalf("MakeJWT failed: %v", err)
+	}
+
+	gotUserID, err := ValidateJWT(token, secret)
+	if err != nil {
+		t.Fatalf("ValidateJWT failed: %v", err)
+	}
+
+	if gotUserID != userID {
+		t.Fatalf("got user ID %v, want %v", gotUserID, userID)
+	}
+}
+
+func TestValidateJWTRejectsExpiredToken(t *testing.T) {
+	token, err := MakeJWT(uuid.New(), "test-secret", -time.Hour)
+	if err != nil {
+		t.Fatalf("MakeJWT failed: %v", err)
+	}
+
+	if _, err := ValidateJWT(token, "test-secret"); err == nil {
+		t.Fatal("expected expired token to be rejected")
+	}
+}
+
+func TestValidateJWTRejectsWrongSecret(t *testing.T) {
+	token, err := MakeJWT(uuid.New(), "test-secret", time.Hour)
+	if err != nil {
+		t.Fatalf("MakeJWT failed: %v", err)
+	}
+
+	if _, err := ValidateJWT(token, "wrong-secret"); err == nil {
+		t.Fatal("expected token signed with the wrong secret to be rejected")
+	}
+}
+
+func TestValidateJWTRejectsMalformedToken(t *testing.T) {
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{name: "empty string", token: ""},
+		{name: "wrong segment count", token: "not.a.token"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ValidateJWT(test.token, "test-secret"); err == nil {
+				t.Fatalf("expected malformed token %q to be rejected", test.token)
+			}
+		})
+	}
+}
+
+func TestCheckPasswordHashRejectsMalformedHash(t *testing.T) {
+	ok, err := CheckPasswordHash(correctPassword, "")
+	if err == nil {
+		t.Fatal("expected malformed hash to return an error")
+	}
+	if ok {
+		t.Fatal("expected malformed hash not to match")
 	}
 }
